@@ -1,0 +1,48 @@
+name: scripts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/**"
+      - "tests/**"
+      - ".github/workflows/scripts.yaml"
+  pull_request:
+    paths:
+      - "scripts/**"
+      - "tests/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: shellcheck
+        run: shellcheck scripts/*.sh
+
+      - name: Unit tests
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Run system_health.sh
+        run: |
+          ./scripts/system_health.sh -c 100 -m 100 -d 100 -s systemd -l health.log
+          # a 0% disk threshold has to raise an alert and exit 1
+          if ./scripts/system_health.sh -d 0 -l health.log; then
+            echo "expected an alert"
+            exit 1
+          fi
+          echo "--- log file ---"
+          cat health.log
+
+      - name: Run app_health_check.py
+        run: |
+          ./scripts/app_health_check.py https://github.com https://api.github.com/zen
+          if ./scripts/app_health_check.py http://127.0.0.1:9 -t 2 -r 0; then
+            echo "expected DOWN"
+            exit 1
+          fi
