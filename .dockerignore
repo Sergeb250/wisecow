@@ -1,0 +1,8 @@
+.git
+.github
+ci
+k8s
+scripts
+tests
+*.md
+LICENSE
