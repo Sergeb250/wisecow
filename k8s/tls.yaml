@@ -1,0 +1,49 @@
+# Small private CA for the namespace: a self-signed issuer signs the CA cert,
+# then the CA issuer signs the certificate used by the ingress.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: selfsigned
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wisecow-ca
+spec:
+  isCA: true
+  commonName: wisecow-ca
+  secretName: wisecow-ca
+  duration: 87600h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: selfsigned
+    kind: Issuer
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: wisecow-ca
+spec:
+  ca:
+    secretName: wisecow-ca
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wisecow-tls
+spec:
+  secretName: wisecow-tls
+  dnsNames:
+    - wisecow.local
+  duration: 2160h
+  renewBefore: 360h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: wisecow-ca
+    kind: Issuer
