@@ -149,7 +149,7 @@ check_processes() {
     fi
 
     local zombies
-    zombies=$(ps -eo stat --no-headers | grep -c '^Z')
+    zombies=$(ps -eo stat --no-headers | awk '/^Z/ {n++} END {print n + 0}')
     if (( zombies > 0 )); then
         log WARN "$zombies zombie process(es)"
     fi
