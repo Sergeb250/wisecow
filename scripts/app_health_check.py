@@ -75,6 +75,7 @@ def check(url, timeout=5.0, expected=DEFAULT_CODES, verify_tls=True):
             status = response.status
     except urllib.error.HTTPError as e:
         status = e.code
+        e.close()
     except urllib.error.URLError as e:
         error = str(e.reason)
     except (http.client.HTTPException, OSError) as e:

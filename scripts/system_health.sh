@@ -136,7 +136,7 @@ check_disks() {
         else
             log OK "disk usage on $mount ${pct}%"
         fi
-    done < <(df -P -x tmpfs -x devtmpfs -x squashfs 2>/dev/null | tail -n +2)
+    done < <(df -P -x tmpfs -x devtmpfs -x squashfs -x efivarfs 2>/dev/null | tail -n +2)
 }
 
 check_processes() {
