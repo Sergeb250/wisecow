@@ -168,6 +168,9 @@ jobs:
           echo "plain http returned $code"
           [[ $code == 301 || $code == 308 ]]
 
+          echo "127.0.0.1 wisecow.local" | sudo tee -a /etc/hosts
+          ./scripts/app_health_check.py https://wisecow.local:8443 --insecure --expect 200
+
       - name: Debug info
         if: failure()
         run: |
