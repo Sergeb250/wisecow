@@ -92,3 +92,111 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
+
+  deploy:
+    name: Deploy to kind
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    env:
+      IMAGE: ${{ needs.build.outputs.image }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Create cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: wisecow
+
+      - name: Install cert-manager and Traefik
+        run: |
+          kubectl apply -f "https://github.com/cert-manager/cert-manager/releases/download/${CERT_MANAGER_VERSION}/cert-manager.yaml"
+          helm repo add traefik https://traefik.github.io/charts
+          helm upgrade --install traefik traefik/traefik --version "$TRAEFIK_CHART_VERSION" \
+            --namespace traefik --create-namespace -f ci/traefik-values.yaml --wait
+          kubectl -n cert-manager wait --for=condition=Available deployment --all --timeout=180s
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Load image into the cluster
+        run: |
+          docker pull "$IMAGE"
+          kind load docker-image "$IMAGE" --name wisecow
+
+      - name: Deploy
+        working-directory: k8s
+        run: |
+          kustomize edit set image wisecow="$IMAGE"
+          # the cert-manager webhook can take a few seconds to accept requests
+          for i in $(seq 1 10); do
+            kubectl apply -k . && break
+            sleep 10
+          done
+          kubectl -n wisecow rollout status deployment/wisecow --timeout=180s
+          kubectl -n wisecow wait --for=condition=Ready certificate/wisecow-tls --timeout=180s
+
+      - name: Test HTTPS
+        run: |
+          kubectl -n wisecow get secret wisecow-tls -o jsonpath='{.data.ca\.crt}' | base64 -d > ca.crt
+          kubectl -n traefik port-forward svc/traefik 8080:80 8443:443 > /dev/null 2>&1 &
+          for i in $(seq 1 20); do
+            curl -s -o /dev/null http://127.0.0.1:8080/ && break
+            sleep 1
+          done
+
+          ok=false
+          for i in $(seq 1 10); do
+            if curl -fsS --cacert ca.crt --resolve wisecow.local:8443:127.0.0.1 https://wisecow.local:8443/ -o cow.html \
+                && grep -q '<pre>' cow.html; then
+              ok=true
+              break
+            fi
+            sleep 3
+          done
+          cat cow.html || true
+          $ok
+
+          code=$(curl -s -o /dev/null -w '%{http_code}' --resolve wisecow.local:8080:127.0.0.1 http://wisecow.local:8080/)
+          echo "plain http returned $code"
+          [[ $code == 301 || $code == 308 ]]
+
+      - name: Debug info
+        if: failure()
+        run: |
+          kubectl get pods -A
+          kubectl -n wisecow describe deployment,pods,certificate,ingress
+          kubectl -n wisecow logs -l app=wisecow --tail=50
+          kubectl -n traefik logs -l app.kubernetes.io/name=traefik --tail=50
+
+  deploy-cluster:
+    name: Deploy to cluster
+    needs: [build, deploy]
+    if: github.event_name != 'pull_request' && vars.DEPLOY_TO_CLUSTER == 'true'
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: ${{ needs.build.outputs.image }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up kubeconfig
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          mkdir -p ~/.kube
+          echo "$KUBE_CONFIG" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Deploy
+        working-directory: k8s
+        run: |
+          kustomize edit set image wisecow="$IMAGE"
+          kubectl apply -k .
+          kubectl -n wisecow rollout status deployment/wisecow --timeout=180s
